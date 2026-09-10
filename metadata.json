@@ -1,0 +1,7 @@
+{
+  "name": "Letter Writing Assistant",
+  "description": "UC Berkeley MDes Reliable Peer letter writing assistant helping classmates navigate professor communications, serious sickness absences, and school resources.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
+

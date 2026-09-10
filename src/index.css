@@ -1,0 +1,42 @@
+@import "tailwindcss";
+
+@layer utilities {
+  .font-garamond {
+    font-family: 'EB Garamond', Georgia, serif;
+  }
+  .font-newsreader {
+    font-family: 'Newsreader', Georgia, serif;
+  }
+  .font-lora {
+    font-family: 'Lora', Georgia, serif;
+  }
+  .font-cinzel {
+    font-family: 'Cinzel', serif;
+  }
+}
+
+@media print {
+  body {
+    background: white !important;
+    color: black !important;
+  }
+  .no-print {
+    display: none !important;
+  }
+  .letter-paper-container {
+    padding: 0 !important;
+    margin: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+  }
+  .letter-sheet {
+    box-shadow: none !important;
+    border: none !important;
+    margin: 0 !important;
+    padding: 20mm !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    min-height: auto !important;
+  }
+}
+
