@@ -69,6 +69,19 @@ const INITIAL_PEER_TURN: PeerInteractionTurn = {
   },
 };
 
+async function extractErrorMessage(res: Response, fallback: string): Promise<string> {
+  try {
+    const errorData = await res.json();
+    if (errorData?.error) return errorData.error;
+  } catch {
+    // Response was not JSON (e.g. Vercel 404 HTML or 500 HTML)
+  }
+  if (res.status === 404) {
+    return 'API endpoint not found (404). If deployed on Vercel, ensure vercel.json and api/index.ts are deployed and GEMINI_API_KEY is configured in Vercel Environment Variables.';
+  }
+  return `${fallback} (HTTP ${res.status}: ${res.statusText || 'Server Error'})`;
+}
+
 export default function App() {
   const [letters, setLetters] = useState<LetterData[]>(() => loadSavedLetters());
   const [currentLetterId, setCurrentLetterId] = useState<string>(() => {
@@ -163,8 +176,8 @@ export default function App() {
       });
 
       if (!response.ok) {
-        const errData = await response.json().catch(() => ({}));
-        throw new Error(errData.error || 'Failed to generate email.');
+        const errorMsg = await extractErrorMessage(response, 'Failed to generate email.');
+        throw new Error(errorMsg);
       }
 
       const result: PeerConsultResponse = await response.json();
@@ -276,8 +289,8 @@ export default function App() {
       });
 
       if (!res.ok) {
-        const errorData = await res.json();
-        throw new Error(errorData.error || 'Failed to draft letter');
+        const errorMsg = await extractErrorMessage(res, 'Failed to draft letter');
+        throw new Error(errorMsg);
       }
 
       const generated = await res.json();
@@ -341,8 +354,8 @@ export default function App() {
       });
 
       if (!res.ok) {
-        const errorData = await res.json();
-        throw new Error(errorData.error || 'Failed to refine letter');
+        const errorMsg = await extractErrorMessage(res, 'Failed to refine letter');
+        throw new Error(errorMsg);
       }
 
       const refined = await res.json();
@@ -385,8 +398,8 @@ export default function App() {
       });
 
       if (!res.ok) {
-        const errData = await res.json();
-        throw new Error(errData.error || 'Failed to rephrase paragraph');
+        const errorMsg = await extractErrorMessage(res, 'Failed to rephrase paragraph');
+        throw new Error(errorMsg);
       }
 
       const data = await res.json();
@@ -424,8 +437,8 @@ export default function App() {
       });
 
       if (!res.ok) {
-        const errData = await res.json();
-        throw new Error(errData.error || 'Failed to analyze letter');
+        const errorMsg = await extractErrorMessage(res, 'Failed to analyze letter');
+        throw new Error(errorMsg);
       }
 
       const result: CritiqueResult = await res.json();

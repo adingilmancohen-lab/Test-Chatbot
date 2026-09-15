@@ -54,8 +54,14 @@ export const ReplyAssistantModal: React.FC<ReplyAssistantModalProps> = ({
       });
 
       if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || 'Failed to generate reply');
+        let errorMsg = 'Failed to generate reply';
+        try {
+          const data = await res.json();
+          if (data?.error) errorMsg = data.error;
+        } catch {
+          errorMsg = `Failed to generate reply (HTTP ${res.status}: ${res.statusText || 'Server Error'})`;
+        }
+        throw new Error(errorMsg);
       }
 
       const data = await res.json();

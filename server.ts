@@ -1,7 +1,6 @@
 import express from "express";
 import path from "path";
 import dotenv from "dotenv";
-import { createServer as createViteServer } from "vite";
 import { GoogleGenAI, Type } from "@google/genai";
 
 dotenv.config();
@@ -13,9 +12,11 @@ app.use(express.json({ limit: "5mb" }));
 
 // Initialize Gemini Client
 function getGeminiClient(): GoogleGenAI {
-  const apiKey = process.env.GEMINI_API_KEY;
+  const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
   if (!apiKey) {
-    throw new Error("GEMINI_API_KEY environment variable is missing.");
+    throw new Error(
+      "GEMINI_API_KEY environment variable is missing. On Vercel: go to Project Settings -> Environment Variables, add GEMINI_API_KEY with your Google AI Studio API key, and redeploy."
+    );
   }
   return new GoogleGenAI({
     apiKey,
@@ -27,13 +28,15 @@ function getGeminiClient(): GoogleGenAI {
   });
 }
 
+const apiRouter = express.Router();
+
 // Health check
-app.get("/api/health", (_req, res) => {
+apiRouter.get("/health", (_req, res) => {
   res.json({ status: "ok", timestamp: new Date().toISOString() });
 });
 
 // Draft new letter
-app.post("/api/letter/generate", async (req, res) => {
+apiRouter.post("/letter/generate", async (req, res) => {
   try {
     const {
       purpose,
@@ -135,7 +138,7 @@ Rules:
 });
 
 // Refine, polish, or rewrite an existing letter
-app.post("/api/letter/refine", async (req, res) => {
+apiRouter.post("/letter/refine", async (req, res) => {
   try {
     const {
       currentLetter,
@@ -227,7 +230,7 @@ Provide the refined version in JSON matching the schema. Also provide a summary 
 });
 
 // Critique & etiquette analysis
-app.post("/api/letter/critique", async (req, res) => {
+apiRouter.post("/letter/critique", async (req, res) => {
   try {
     const { letter, intendedAudience = "General professional" } = req.body;
     if (!letter || !letter.bodyParagraphs) {
@@ -286,7 +289,7 @@ Analyze the correspondence:
 });
 
 // Reliable Peer UC Berkeley MDes Assistant Endpoint - Generates actual email, not advice
-app.post("/api/peer/consult", async (req, res) => {
+apiRouter.post("/peer/consult", async (req, res) => {
   try {
     const {
       initialAsk = "Write a casual email to Hugh notifying him of my absence from class due to serious sickness",
@@ -418,7 +421,7 @@ Produce:
 });
 
 // Reply generator based on received letter
-app.post("/api/letter/reply", async (req, res) => {
+apiRouter.post("/letter/reply", async (req, res) => {
   try {
     const { receivedLetterText, responseGoal, tone = "diplomatic", yourName = "" } = req.body;
     if (!receivedLetterText) {
@@ -476,8 +479,16 @@ Format as JSON matching the schema.`;
   }
 });
 
+// Mount router under both /api and root (to handle direct requests and Vercel rewrites)
+app.use("/api", apiRouter);
+app.use(apiRouter);
+
+export { app };
+export default app;
+
 async function startServer() {
   if (process.env.NODE_ENV !== "production") {
+    const { createServer: createViteServer } = await import("vite");
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
@@ -496,4 +507,7 @@ async function startServer() {
   });
 }
 
-startServer();
+// Only start standalone HTTP server when not in Vercel serverless environment
+if (!process.env.VERCEL) {
+  startServer();
+}
