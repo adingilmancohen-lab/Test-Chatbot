@@ -13,6 +13,38 @@
   .font-cinzel {
     font-family: 'Cinzel', serif;
   }
+  .font-almendra {
+    font-family: 'Almendra', 'Cinzel', serif;
+  }
+  .font-medieval {
+    font-family: 'MedievalSharp', 'Almendra', cursive;
+  }
+  
+  /* Bosch parchment paper with subtle fiber textures and aged illuminated manuscript glow */
+  .bosch-parchment {
+    background-color: #f6eedb;
+    background-image: 
+      radial-gradient(#e4d6b6 1px, transparent 1px),
+      radial-gradient(#d8c49e 1px, #f6eedb 1px);
+    background-size: 24px 24px;
+    background-position: 0 0, 12px 12px;
+  }
+
+  .bosch-dark-panel {
+    background: radial-gradient(circle at 50% 0%, #2a2c1e 0%, #161811 100%);
+  }
+
+  .bosch-gold-border {
+    border-image: linear-gradient(to bottom right, #d4af37, #8b6b23, #f5d77f, #705315) 1;
+  }
+
+  .bosch-wood-frame {
+    box-shadow: 
+      0 0 0 1px #594022,
+      0 0 0 4px #2b1d0c,
+      0 0 0 5px #7a5832,
+      0 10px 30px -5px rgba(0, 0, 0, 0.7);
+  }
 }
 
 @media print {
