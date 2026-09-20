@@ -2,6 +2,7 @@ import express from "express";
 import path from "path";
 import dotenv from "dotenv";
 import { GoogleGenAI, Type } from "@google/genai";
+import { SYLLABUS_KNOWLEDGE_BASE_TEXT, SYSTEM_INSTRUCTIONS_TEXT } from "./src/data/syllabusKnowledgeBase";
 
 dotenv.config();
 
@@ -10,16 +11,74 @@ const PORT = 3000;
 
 app.use(express.json({ limit: "5mb" }));
 
+// Helper to find and sanitize Gemini API Key (handles case sensitivity in process.env, quotes, whitespace)
+function cleanKey(raw: string | undefined): string | undefined {
+  if (!raw) return undefined;
+  let key = raw.trim();
+  if (
+    (key.startsWith('"') && key.endsWith('"')) ||
+    (key.startsWith("'") && key.endsWith("'"))
+  ) {
+    key = key.slice(1, -1).trim();
+  }
+  return key || undefined;
+}
+
+function findApiKeyInfo(): { key?: string; name?: string } {
+  // 1. Direct checks for exact common names
+  const directNames = [
+    "GEMINI_API_KEY",
+    "GOOGLE_API_KEY",
+    "Gemini_API_KEY",
+    "VITE_GEMINI_API_KEY",
+  ];
+  for (const name of directNames) {
+    const val = cleanKey(process.env[name]);
+    if (val) return { key: val, name };
+  }
+
+  // 2. Case-insensitive lookup across all keys in process.env (Vercel / Linux is case-sensitive)
+  for (const [key, val] of Object.entries(process.env)) {
+    if (typeof val === "string") {
+      const upper = key.toUpperCase();
+      if (
+        upper === "GEMINI_API_KEY" ||
+        upper === "GEMINI_KEY" ||
+        upper === "GOOGLE_API_KEY" ||
+        upper === "GOOGLE_GENAI_API_KEY" ||
+        upper === "GEMINIAPIKEY" ||
+        upper === "VITE_GEMINI_API_KEY"
+      ) {
+        const cleaned = cleanKey(val);
+        if (cleaned) return { key: cleaned, name: key };
+      }
+    }
+  }
+
+  // 3. Fallback: any environment variable containing both 'GEMINI' and 'KEY'
+  for (const [key, val] of Object.entries(process.env)) {
+    if (typeof val === "string") {
+      const upper = key.toUpperCase();
+      if (upper.includes("GEMINI") && upper.includes("KEY")) {
+        const cleaned = cleanKey(val);
+        if (cleaned) return { key: cleaned, name: key };
+      }
+    }
+  }
+
+  return {};
+}
+
 // Initialize Gemini Client
 function getGeminiClient(): GoogleGenAI {
-  const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
-  if (!apiKey) {
+  const { key, name } = findApiKeyInfo();
+  if (!key) {
     throw new Error(
-      "GEMINI_API_KEY environment variable is missing. On Vercel: go to Project Settings -> Environment Variables, add GEMINI_API_KEY with your Google AI Studio API key, and redeploy."
+      "GEMINI_API_KEY is not available to the server. If you already added it in Vercel: Vercel does NOT update existing deployments automatically — you MUST click 'Redeploy' on your latest deployment in Vercel for new environment variables to take effect! Also ensure 'Production' is checked under Environment selection in Vercel."
     );
   }
   return new GoogleGenAI({
-    apiKey,
+    apiKey: key,
     httpOptions: {
       headers: {
         "User-Agent": "aistudio-build",
@@ -30,9 +89,19 @@ function getGeminiClient(): GoogleGenAI {
 
 const apiRouter = express.Router();
 
-// Health check
+// Health check with diagnostics (safe: does not reveal secret key value)
 apiRouter.get("/health", (_req, res) => {
-  res.json({ status: "ok", timestamp: new Date().toISOString() });
+  const { key, name } = findApiKeyInfo();
+  res.json({
+    status: "ok",
+    hasApiKey: !!key,
+    detectedVariableName: name || null,
+    isVercel: Boolean(process.env.VERCEL),
+    timestamp: new Date().toISOString(),
+    advice: !key
+      ? "No API key found in runtime. If you added Gemini_API_KEY in Vercel, go to Deployments -> click '...' on latest deployment -> Redeploy."
+      : "API key is loaded and ready.",
+  });
 });
 
 // Draft new letter
@@ -288,79 +357,70 @@ Analyze the correspondence:
   }
 });
 
-// Reliable Peer UC Berkeley MDes Assistant Endpoint - Generates actual email, not advice
-apiRouter.post("/peer/consult", async (req, res) => {
+// Reliable Peer UC Berkeley MDes Assistant Endpoint - Generates or revises actual email using syllabus knowledge base
+const handlePeerPrompt = async (req: express.Request, res: express.Response) => {
   try {
     const {
-      initialAsk = "Write a casual email to Hugh notifying him of my absence from class due to serious sickness",
-      specificOutput = "casual email draft to Hugh",
+      prompt: directPrompt = "",
+      userPrompt = "",
+      initialAsk = "",
+      senderName = "",
+      senderEmail = "",
+      revisionFeedback = "",
+      currentEmail = null,
       additionalInfo = "",
-      currentLoopStep = 1, // 1: suggestion, 2: ask symptoms, 3: clarify, 4: alternative
       conversationHistory = [],
     } = req.body;
 
+    const finalUserPrompt = (
+      directPrompt ||
+      userPrompt ||
+      initialAsk ||
+      "Write an email to notify the instructor about missing studio today due to sickness"
+    ).trim();
+
+    const activeSenderName = (senderName || "").trim() || "Student";
+    const activeSenderEmail = (senderEmail || "").trim() || `${activeSenderName.toLowerCase().replace(/[^a-z0-9]/g, "") || "student"}@berkeley.edu`;
+    const isRevision = Boolean(revisionFeedback && revisionFeedback.trim() && currentEmail);
+
     const ai = getGeminiClient();
 
-    const loopStepDescriptions: Record<number, string> = {
-      1: "Step 1: Casual initial absence notice to Hugh with a quick deliverable handoff plan.",
-      2: "Step 2: Casual absence email mentioning medical checkup at Tang Center (UHS) without oversharing.",
-      3: "Step 3: Studio deliverables handoff email detailing Jacobs Hall critique plan with partner.",
-      4: "Step 4: Alternative arrangements email (e.g. async critique review, partner pin-up, or office hour catchup).",
-    };
+    const systemPrompt = `${SYSTEM_INSTRUCTIONS_TEXT}
 
-    const currentStepDescription = loopStepDescriptions[currentLoopStep] || loopStepDescriptions[1];
+=== ATTACHED SYLLABUS KNOWLEDGE BASE ===
+${SYLLABUS_KNOWLEDGE_BASE_TEXT}
 
-    const prompt = `You are an AI assistant specialized for UC Berkeley Master of Design (MDes) graduate students.
+=== SENDER IDENTITY ===
+Name: ${activeSenderName}
+Email: ${activeSenderEmail}
 
-CRITICAL DIRECTIVES:
-1. GENERATE AN EMAIL, NOT ADVICE:
-Do NOT output conversational advice, meta-instructions, coaching tips, or commentary on what the user should write.
-Directly compose the actual, ready-to-send email addressed to Hugh (or the indicated recipient) that Yuwen can send via bMail / email.
+${isRevision ? `=== TASK: REVISE EXISTING EMAIL ===
+You are revising the user's previously generated email based on their specific feedback.
+Existing Email:
+${JSON.stringify(currentEmail, null, 2)}
 
-2. CASUAL TONE & FIRST-NAME BASIS (VERY IMPORTANT):
-MDes professors and instructors (including Hugh Dubberly) are VERY CASUAL. They work closely with students in Jacobs Hall studios and go by their first names.
-- Address EVERYONE by their FIRST NAME only. Always use "Hi Hugh," or "Hey Hugh,"—NEVER "Dear Professor Dubberly", "Dear Professor", "Mr. Dubberly", etc.
-- Use a casual, friendly, natural, and collegiate studio tone. Speak student-to-professor in a peer-like, respectful yet relaxed manner.
-- Do NOT use stiff, formal, or archaic academic language (e.g. do NOT say "I am writing to formally notify you that I will be unable to attend..."). Instead say something natural like "Wanted to give you a quick heads up that I won’t be able to make it to studio tomorrow..."
-- Keep it concise, direct, and considerate of everyone's time.
-- Salutation: "Hi Hugh," or "Hey Hugh,"
-- Valediction: "Best," or "Thanks," (just the closing word with comma, without the sender name)
-- Sender Name: "Yuwen"
+User Feedback for Revision:
+"${revisionFeedback.trim()}"
 
-[CONTEXT & CHARACTERS]
-- Student (Sender): Yuwen, UC Berkeley MDes graduate student. First name: Yuwen. Email: yuwen@berkeley.edu.
-- Recipient: Hugh Dubberly, MDes professor at Jacobs Hall (DES INV 200 Systems). First name: Hugh. Email: dubberly@berkeley.edu.
-- Recipient Profile: Hugh is a legendary design planner and systems thinker (Dubberly Design Office). In studio, he's very approachable, casual, and goes by Hugh. He appreciates quick proactive communication, clear ownership of work, and knowing team deliverables are sorted.
-- Campus Context: UC Berkeley, Jacobs Hall studio critique, Tang Center (University Health Services / UHS).
+Original Prompt:
+"${finalUserPrompt}"` : `=== TASK: DRAFT NEW EMAIL ===
+User Request / Prompt:
+"${finalUserPrompt}"`}
 
-[CURRENT INTERACTION LOOP FOCUS]
-${currentStepDescription}
+${additionalInfo ? `Additional Context/Info: "${additionalInfo}"` : ""}
+${conversationHistory && conversationHistory.length > 0 ? `Previous History: ${JSON.stringify(conversationHistory.slice(-4))}` : ""}
 
-[USER INPUTS]
-Initial ask: "${initialAsk}"
-Specific output requested: "${specificOutput}"
-Additional info / symptoms: "${additionalInfo}"
-Previous context: ${JSON.stringify(conversationHistory.slice(-4))}
-
-[EMAIL WRITING STANDARDS]
-- Tone: Casual, friendly, direct, and responsible.
-- First-name addressing: Always "Hi Hugh,".
-- Clearly states missing studio due to feeling sick and needing to get checked out at the Tang Center.
-- No weird or gross oversharing—keeps medical details casual and high-level (e.g., "came down with a pretty bad bug/fever").
-- Reassures Hugh about the Systems deliverable: mentions files are in Figma/Drive and partner (Elena) will pin up and present during critique.
-- Proposes catching up on critique feedback once recovered.
-- Closing: "Best," or "Thanks," then "Yuwen".
-
-Produce:
-1. email: The complete, ready-to-send email object (subject, recipientName, recipientEmail, senderName, senderEmail, salutation, bodyParagraphs, valediction, postscript). recipientName should be "Hugh".
-2. policyReference: Relevant UC Berkeley policy (e.g. Tang Center UHS medical excuse guidelines, Jacobs Hall studio culture).
-3. nextLoopStep: Next integer (1 to 4).
-4. currentStepName: Short title of the loop step executed.
-5. ruleChecks: Verification booleans (professionalTone, directAccountability, noOverSharing, policyCompliant).`;
+DIRECTIVES:
+1. Identify the intended recipient (e.g. Hugh Dubberly for DES INV 200, Chris Myers / Sudhu Tewari / TJ McLeish / Joris Komen for DESINV 202, or general MDes faculty/staff). Use their FIRST NAME only in the salutation (e.g. "Hi Hugh,", "Hi Chris,", "Hi Sudhu,", "Hi Joris,").
+2. Compose/revise the complete, ready-to-send email letter on behalf of ${activeSenderName} (${activeSenderEmail}). The senderName MUST be "${activeSenderName}" and senderEmail MUST be "${activeSenderEmail}". Do NOT hardcode "Yuwen" unless the user specified "Yuwen".
+3. If this is a revision, directly apply all instructions from the User Feedback (e.g. adjust tone, add a specific detail, make it shorter/longer, emphasize project progress) while maintaining syllabus compliance and the studio norms.
+4. Reference or follow the course policy (such as filling out the bCourses Absence & Tardiness Form for DESINV 202, notifying in advance for DES INV 200, the 2 unexcused absences allowance, or coordinating teammate handoff for pinups/critiques at Jacobs Hall).
+5. Do NOT output conversational advice or meta-commentary—directly output the complete revised or drafted email.
+6. Provide the exact relevant policy citation/snippet from the attached syllabus under 'policyReference'.`;
 
     const response = await ai.models.generateContent({
       model: "gemini-3.8-flash",
-      contents: prompt,
+      contents: systemPrompt,
       config: {
         responseMimeType: "application/json",
         responseSchema: {
@@ -369,10 +429,10 @@ Produce:
             email: {
               type: Type.OBJECT,
               properties: {
-                recipientName: { type: Type.STRING },
-                recipientEmail: { type: Type.STRING },
-                senderName: { type: Type.STRING },
-                senderEmail: { type: Type.STRING },
+                recipientName: { type: Type.STRING, description: "First name of recipient, e.g. Hugh or Chris" },
+                recipientEmail: { type: Type.STRING, description: "Email address of recipient from syllabus if known" },
+                senderName: { type: Type.STRING, description: "Sender name as provided by user" },
+                senderEmail: { type: Type.STRING, description: "Sender email as provided by user" },
                 subject: { type: Type.STRING },
                 salutation: { type: Type.STRING },
                 bodyParagraphs: {
@@ -386,15 +446,15 @@ Produce:
             },
             policyReference: {
               type: Type.STRING,
-              description: "Applicable UC Berkeley policy snippet or citation",
+              description: "Applicable UC Berkeley syllabus policy snippet or citation from knowledge base",
             },
             nextLoopStep: {
               type: Type.INTEGER,
-              description: "Next step number in the interaction loop (1 to 4)",
+              description: "Step number (1 to 4)",
             },
             currentStepName: {
               type: Type.STRING,
-              description: "Name of the interaction loop step completed",
+              description: "Short title of the step executed",
             },
             ruleChecks: {
               type: Type.OBJECT,
@@ -416,9 +476,12 @@ Produce:
     res.json(output);
   } catch (error: any) {
     console.error("Error in peer consult:", error);
-    res.status(500).json({ error: error.message || "Failed to generate email" });
+    res.status(500).json({ error: error.message || "Failed to generate peer draft" });
   }
-});
+};
+
+apiRouter.post("/peer/consult", handlePeerPrompt);
+apiRouter.post("/peer/generate", handlePeerPrompt);
 
 // Reply generator based on received letter
 apiRouter.post("/letter/reply", async (req, res) => {
