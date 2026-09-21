@@ -2,7 +2,7 @@ import express from "express";
 import path from "path";
 import dotenv from "dotenv";
 import { GoogleGenAI, Type } from "@google/genai";
-import { SYLLABUS_KNOWLEDGE_BASE_TEXT, SYSTEM_INSTRUCTIONS_TEXT } from "./src/data/syllabusKnowledgeBase";
+import { SYLLABUS_KNOWLEDGE_BASE_TEXT, SYSTEM_INSTRUCTIONS_TEXT } from "./src/data/syllabusKnowledgeBase.js";
 
 dotenv.config();
 
